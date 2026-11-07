@@ -107,6 +107,7 @@ async function main() {
     baseDecimals: market.baseDecimals,
     quoteDecimals: market.quoteDecimals,
     minQuantity: market.minQuantity,
+    lotSize: market.lotSize,
     tickSize: market.tickSize,
     feedHealthy: null,
     feedUpdatedAt: market.indexUpdatedAt ?? null,
@@ -125,3 +126,4 @@ main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
+

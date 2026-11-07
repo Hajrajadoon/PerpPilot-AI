@@ -10,11 +10,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@somnia-chain/markets-sdk": "^0.32.1",
     "axios": "^1.20.0",
     "lucide-react": "^1.48.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "recharts": "^3.10.1"
+    "recharts": "^3.10.1",
+    "viem": "^2.57.15"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

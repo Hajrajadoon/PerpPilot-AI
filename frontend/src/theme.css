@@ -1,0 +1,90 @@
+/* PerpPilot shared theme + polish (loaded after App.css) */
+:root {
+  --pp-bg: #07100d;
+  --pp-panel: rgba(13, 25, 20, 0.88);
+  --pp-inner: rgba(0, 0, 0, 0.28);
+  --pp-border: rgba(255, 255, 255, 0.08);
+  --pp-green: #35d48c;
+  --pp-green-strong: #1fa971;
+  --pp-amber: #e3bb69;
+  --pp-red: #ef7774;
+  --pp-text: #f4f7f5;
+  --pp-muted: #8b9a93;
+}
+
+::selection {
+  background: rgba(53, 212, 140, 0.35);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(53, 212, 140, 0.35) transparent;
+}
+
+button {
+  transition: filter 0.15s ease, transform 0.15s ease,
+    background 0.15s ease, border-color 0.15s ease;
+}
+
+button:not(:disabled):hover {
+  filter: brightness(1.12);
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+:focus-visible {
+  outline: 2px solid rgba(53, 212, 140, 0.7);
+  outline-offset: 2px;
+}
+
+input,
+select {
+  font: inherit;
+  color-scheme: dark;
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: rgba(53, 212, 140, 0.65) !important;
+  box-shadow: 0 0 0 3px rgba(53, 212, 140, 0.15);
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.panel {
+  transition: border-color 0.2s ease;
+}
+
+.panel:hover {
+  border-color: rgba(53, 212, 140, 0.22);
+}
+
+.metric,
+strong,
+td {
+  font-variant-numeric: tabular-nums;
+}
+
+table th {
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.4px;
+}
+
+@media (max-width: 700px) {
+  .dashboard {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+}

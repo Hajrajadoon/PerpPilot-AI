@@ -1,0 +1,721 @@
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { createWalletClient, custom, formatUnits, parseUnits } from "viem";
+import {
+  SOMNIA_HIDEKI_TESTNET_ADDRESSES,
+  SomniaMarkets,
+} from "@somnia-chain/markets-sdk";
+import { hidekiTestnet } from "@somnia-chain/markets-sdk/chains";
+
+const CHAIN_ID = 50383;
+const INDEXER_URL = "https://hideki-dev.smk.somnia.host/v1/graphql";
+
+const panelStyle = {
+  background: "#111827",
+  color: "#e5e7eb",
+  border: "1px solid #293548",
+  borderRadius: "14px",
+  padding: "20px",
+  width: "calc(100% - 40px)",
+  maxWidth: "1400px",
+  margin: "28px auto",
+};
+
+const inputStyle = {
+  width: "100%",
+  boxSizing: "border-box",
+  padding: "11px",
+  marginTop: "6px",
+  borderRadius: "8px",
+  border: "1px solid #374151",
+  background: "#0b1220",
+  color: "#fff",
+};
+
+function jsonSafe(value) {
+  return JSON.stringify(
+    value,
+    (_, item) => typeof item === "bigint" ? item.toString() : item,
+    2
+  );
+}
+
+function findMaxQuantity(value) {
+  if (typeof value === "bigint") return value;
+
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    return BigInt(value);
+  }
+
+  if (!value || typeof value !== "object") return null;
+
+  for (const key of [
+    "maxQuantity",
+    "maxOrderSize",
+    "maxSize",
+    "quantity",
+    "size",
+    "max",
+  ]) {
+    const found = findMaxQuantity(value[key]);
+    if (found !== null) return found;
+  }
+
+  return null;
+}
+
+function displayCollateral(value) {
+  try {
+    return Number(formatUnits(BigInt(value ?? 0), 18))
+      .toLocaleString(undefined, { maximumFractionDigits: 4 });
+  } catch {
+    return "—";
+  }
+}
+
+export default function PerpTradingPanel({ market }) {
+  const [account, setAccount] = useState("");
+  const [chainId, setChainId] = useState(null);
+  const [side, setSide] = useState("long");
+  const [quantity, setQuantity] = useState("");
+  const [price, setPrice] = useState("");
+  const [margin, setMargin] = useState(null);
+  const [health, setHealth] = useState(null);
+  const [voucher, setVoucher] = useState(null);
+  const [openOrders, setOpenOrders] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [txResult, setTxResult] = useState(null);
+  const [cancellingId, setCancellingId] = useState(null);
+
+  const provider = typeof window !== "undefined"
+    ? window.ethereum
+    : null;
+
+  const sdk = useMemo(() => new SomniaMarkets({
+    chain: hidekiTestnet,
+    wsRpcUrl: "wss://api.hideki2.infra.testnet.somnia.network/ws",
+    indexerUrl: INDEXER_URL,
+    addresses: SOMNIA_HIDEKI_TESTNET_ADDRESSES,
+  }), []);
+
+  useEffect(() => {
+    if (!provider) return;
+
+    const sync = async () => {
+      try {
+        const [accounts, chain] = await Promise.all([
+          provider.request({ method: "eth_accounts" }),
+          provider.request({ method: "eth_chainId" }),
+        ]);
+
+        setAccount(accounts?.[0] || "");
+        setChainId(Number.parseInt(chain, 16));
+      } catch {
+        setMessage("Could not read wallet status.");
+      }
+    };
+
+    const onAccounts = (accounts) => {
+      setAccount(accounts?.[0] || "");
+      setMargin(null);
+      setHealth(null);
+      setVoucher(null);
+      setOpenOrders(null);
+    };
+
+    const onChain = (chain) => {
+      setChainId(Number.parseInt(chain, 16));
+      setMargin(null);
+      setHealth(null);
+      setVoucher(null);
+      setOpenOrders(null);
+    };
+
+    const onAppDisconnect = () => {
+      setAccount("");
+      setMargin(null);
+      setHealth(null);
+      setVoucher(null);
+      setOpenOrders(null);
+      setMessage("Wallet disconnected from PerpPilot.");
+    };
+
+    sync();
+    provider.on?.("accountsChanged", onAccounts);
+    provider.on?.("chainChanged", onChain);
+    window.addEventListener("perppilot:wallet-disconnected", onAppDisconnect);
+    window.addEventListener("perppilot:wallet-connected", sync);
+
+    return () => {
+      window.removeEventListener("perppilot:wallet-connected", sync);
+      provider.removeListener?.("accountsChanged", onAccounts);
+      provider.removeListener?.("chainChanged", onChain);
+      window.removeEventListener("perppilot:wallet-disconnected", onAppDisconnect);
+    };
+  }, [provider]);
+
+  useEffect(() => {
+  if (market?.markPriceRaw && market.quoteDecimals != null) {
+    try {
+      const rawPrice = BigInt(market.markPriceRaw);
+      const tick = BigInt(market.tickSize ?? 0);
+
+      if (tick <= 0n) {
+        setPrice("");
+        return;
+      }
+
+      // Round mark price to the nearest valid market tick.
+      const alignedPrice =
+        ((rawPrice + tick / 2n) / tick) * tick;
+
+      setPrice(formatUnits(
+        alignedPrice,
+        market.quoteDecimals
+      ));
+    } catch {
+      setPrice("");
+    }
+  }
+}, [
+  market?.symbol,
+  market?.markPriceRaw,
+  market?.quoteDecimals,
+  market?.tickSize
+]);
+
+  const refreshAccount = useCallback(async () => {
+    if (!account || chainId !== CHAIN_ID || !market?.marginBank ||
+        !market?.poolAddress) {
+      return;
+    }
+
+    setBusy(true);
+    setMessage("");
+
+    try {
+      const owner = account;
+      const bank = market.marginBank;
+      const pool = market.poolAddress;
+
+      const reads = await Promise.allSettled([
+        sdk.client.getMarginAccount(bank, owner),
+        sdk.client.getAccountHealth(bank, owner),
+        sdk.client.getPerpVoucherEligibility(bank, owner),
+        sdk.client.getOpenOrdersOnchain([pool], owner),
+      ]);
+
+      const setters = [setMargin, setHealth, setVoucher, setOpenOrders];
+      const labels = ["Margin account", "Account health", "Voucher eligibility", "Open orders"];
+      const failures = [];
+
+      reads.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          setters[index](result.value);
+        } else {
+          setters[index](null);
+          failures.push(
+            `${labels[index]}: ${result.reason?.shortMessage || result.reason?.message || "Read failed"}`
+          );
+        }
+      });
+
+      setMessage(
+        failures.length
+          ? `Some testnet reads failed: ${failures.join(" | ")}`
+          : "Account information refreshed successfully."
+      );
+    } catch (error) {
+      setMessage(error?.shortMessage || error?.message ||
+        "Account information could not be loaded.");
+    } finally {
+      setBusy(false);
+    }
+  }, [account, chainId, market, sdk]);
+
+  useEffect(() => {
+    refreshAccount();
+  }, [refreshAccount]);
+
+  const submitOrder = async () => {
+    if (!provider || !account) {
+      setMessage("Connect your wallet first.");
+      return;
+    }
+
+    if (chainId !== CHAIN_ID) {
+      setMessage("Switch your wallet to Somnia Hideki Testnet.");
+      return;
+    }
+
+    if (!market?.poolAddress || !market?.marginBank ||
+        !market?.baseDecimals || market.quoteDecimals == null ||
+        !market?.lotSize || !market?.tickSize ||
+        !market?.minQuantity || !market?.markPriceRaw) {
+      setMessage("This market is missing required trading metadata.");
+      return;
+    }
+
+    let quantityRaw;
+    let priceRaw;
+
+    try {
+      quantityRaw = parseUnits(quantity, market.baseDecimals);
+      priceRaw = parseUnits(price, market.quoteDecimals);
+    } catch {
+      setMessage("Enter a valid quantity and price.");
+      return;
+    }
+
+    const lotSize = BigInt(market.lotSize);
+    const tickSize = BigInt(market.tickSize);
+    const minQuantity = BigInt(market.minQuantity);
+
+    if (quantityRaw <= 0n || priceRaw <= 0n) {
+      setMessage("Quantity and price must be greater than zero.");
+      return;
+    }
+
+    if (quantityRaw < minQuantity || quantityRaw % lotSize !== 0n) {
+      setMessage("Quantity is below the minimum or does not match the market lot size.");
+      return;
+    }
+
+    if (priceRaw % tickSize !== 0n) {
+      setMessage("Price does not match this market's tick size.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Review order:\n\n${side.toUpperCase()} ${quantity} ${market.baseSymbol}\n` +
+      `${market.symbol} at ${price} ${market.quoteSymbol}\n\n` +
+      "Continue to the wallet for transaction approval?"
+    );
+
+    if (!confirmed) return;
+
+    setBusy(true);
+    setMessage("Checking order capacity...");
+    setTxResult(null);
+
+    try {
+      const walletClient = createWalletClient({
+        account,
+        chain: hidekiTestnet,
+        transport: custom(provider),
+      });
+
+      const trader = sdk.client.createTrader({ walletClient });
+
+      const capacity = await sdk.client.getMaxPerpOrderSize({
+        pool: market.poolAddress,
+        marginBank: market.marginBank,
+        account,
+        isBid: side === "long",
+        price: priceRaw,
+      });
+
+      const maxQuantity = findMaxQuantity(capacity);
+
+      if (maxQuantity === null) {
+        throw new Error(
+          "Could not interpret the SDK order-capacity result. No order was sent."
+        );
+      }
+
+      if (quantityRaw > maxQuantity) {
+        throw new Error(
+          `Requested quantity exceeds available capacity. Maximum raw quantity: ${maxQuantity}`
+        );
+      }
+
+      setMessage("Waiting for wallet approval...");
+
+      const result = await trader.placePerpOrder({
+        pool: market.poolAddress,
+        isBid: side === "long",
+        price: priceRaw,
+        quantity: quantityRaw,
+        orderType: 0,
+      });
+
+      setTxResult(result);
+
+      if (result?.receipt?.status === "reverted") {
+        throw new Error("Order transaction reverted on-chain. No order was placed.");
+      }
+
+      setMessage(
+        result?.orderId != null
+          ? `Order #${result.orderId} placed. Refreshing account...`
+          : "Order transaction confirmed (it may have filled immediately). Refreshing account..."
+      );
+      await refreshAccount();
+    } catch (error) {
+      setMessage(error?.shortMessage || error?.message ||
+        "Order submission failed. Check your wallet and network.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelOrder = async (order) => {
+    if (!provider || !account) {
+      setMessage("Connect your wallet first.");
+      return;
+    }
+
+    if (chainId !== CHAIN_ID) {
+      setMessage("Switch your wallet to Somnia Hideki Testnet.");
+      return;
+    }
+
+    if (!market?.poolAddress) {
+      setMessage("Market pool address is missing. No cancellation was sent.");
+      return;
+    }
+
+    const orderId = BigInt(order.orderId);
+
+    const confirmed = window.confirm(
+      `Cancel order #${orderId} on ${market.symbol}?\n\n` +
+      "This sends a testnet transaction from your wallet."
+    );
+    if (!confirmed) return;
+
+    setCancellingId(orderId.toString());
+    setMessage("Waiting for wallet approval to cancel...");
+
+    try {
+      const walletClient = createWalletClient({
+        account,
+        chain: hidekiTestnet,
+        transport: custom(provider),
+      });
+
+      const trader = sdk.client.createTrader({ walletClient });
+
+      const result = await trader.cancelOrder({
+        pool: market.poolAddress,
+        orderId,
+      });
+
+      if (result?.receipt?.status === "reverted") {
+        throw new Error(
+          "Cancellation reverted on-chain. The order may already be filled or cancelled."
+        );
+      }
+
+      setMessage(`Order #${orderId} cancelled. Refreshing account...`);
+      await refreshAccount();
+    } catch (error) {
+      setMessage(
+        error?.code === 4001 || error?.shortMessage?.includes("rejected")
+          ? "Cancellation rejected in wallet."
+          : error?.shortMessage || error?.message ||
+            "Cancellation failed. Check your wallet and network."
+      );
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
+  if (!market) return null;
+
+  const correctNetwork = chainId === CHAIN_ID;
+
+  return (
+    <section style={panelStyle}>
+      <div style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: "10px",
+      }}>
+        <div>
+          <h2 style={{ margin: 0 }}>Perp Trading</h2>
+          <p style={{ color: "#9ca3af", margin: "6px 0" }}>
+            Somnia Hideki Testnet · {market.symbol}
+          </p>
+        </div>
+        <span style={{
+          fontSize: "12px",
+          color: correctNetwork ? "#4ade80" : "#fbbf24",
+        }}>
+          {account
+            ? correctNetwork ? "Wallet connected · Network verified" : "Wrong network"
+            : "Wallet not connected"}
+        </span>
+      </div>
+
+      {!account && (
+        <p style={{ color: "#fbbf24" }}>
+          Connect MetaMask or Rabby using the wallet button above.
+        </p>
+      )}
+
+      {account && (
+        <p style={{ color: "#9ca3af", fontSize: "12px" }}>
+          {account.slice(0, 8)}...{account.slice(-6)}
+        </p>
+      )}
+
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+        gap: "12px",
+        marginTop: "16px",
+      }}>
+        <div>
+          <label>Direction</label>
+          <select
+            value={side}
+            onChange={(event) => setSide(event.target.value)}
+            style={inputStyle}
+          >
+            <option value="long">Buy / Long</option>
+            <option value="short">Sell / Short</option>
+          </select>
+        </div>
+
+        <div>
+          <label>Quantity ({market.baseSymbol})</label>
+          <input
+            type="number"
+            min="0"
+            step="any"
+            value={quantity}
+            onChange={(event) => setQuantity(event.target.value)}
+            placeholder="Enter quantity"
+            style={inputStyle}
+          />
+        </div>
+
+        <div>
+          <label>Limit price ({market.quoteSymbol})</label>
+          <input
+            type="number"
+            min="0"
+            step="any"
+            value={price}
+            onChange={(event) => setPrice(event.target.value)}
+            placeholder="Enter limit price"
+            style={inputStyle}
+          />
+        </div>
+      </div>
+
+      <p style={{ color: "#9ca3af", fontSize: "12px" }}>
+        Mark price: {market.markPrice ?? "Unavailable"} ·
+        Minimum raw quantity: {market.minQuantity} ·
+        Tick size: {market.tickSize}
+      </p>
+
+      <div style={{
+        display: "flex",
+        gap: "10px",
+        flexWrap: "wrap",
+        marginTop: "16px",
+      }}>
+        <button
+          onClick={submitOrder}
+          disabled={busy || !account || !correctNetwork}
+          style={{
+            padding: "11px 18px",
+            borderRadius: "8px",
+            border: 0,
+            background: "#2563eb",
+            color: "white",
+            cursor: busy ? "wait" : "pointer",
+            opacity: busy || !account || !correctNetwork ? 0.5 : 1,
+          }}
+        >
+          {busy ? "Please wait..." : "Review & Submit Limit Order"}
+        </button>
+
+        <button
+          onClick={refreshAccount}
+          disabled={busy || !account || !correctNetwork}
+          style={{
+            padding: "11px 18px",
+            borderRadius: "8px",
+            border: "1px solid #475569",
+            background: "transparent",
+            color: "white",
+          }}
+        >
+          Refresh account
+        </button>
+      </div>
+
+      {message && (
+        <p role="status" style={{ color: "#fbbf24", marginTop: "14px" }}>
+          {message}
+        </p>
+      )}
+
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+        gap: "12px",
+        marginTop: "24px",
+      }}>
+        {[
+          ["Account equity", margin ? displayCollateral(margin.equity) : "—"],
+          ["Available collateral", margin ? displayCollateral(margin.unlockedCollateralBalance) : "—"],
+          ["Locked collateral", margin ? displayCollateral(margin.lockedCollateral) : "—"],
+          ["Margin status", health?.marginStatus || margin?.marginStatus || "—"],
+        ].map(([label, value]) => (
+          <div key={label} style={{
+            background: "#0b1220",
+            border: "1px solid #293548",
+            borderRadius: "10px",
+            padding: "16px",
+          }}>
+            <p style={{ color: "#9ca3af", fontSize: "12px", margin: 0 }}>{label}</p>
+            <strong style={{ display: "block", fontSize: "20px", marginTop: "9px" }}>
+              {value}
+            </strong>
+          </div>
+        ))}
+      </div>
+
+      <div style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "12px",
+        marginTop: "16px",
+      }}>
+        <div style={{
+          flex: "1 1 220px",
+          background: "#0b1220",
+          border: "1px solid #293548",
+          borderRadius: "10px",
+          padding: "14px",
+        }}>
+          <p style={{ color: "#9ca3af", fontSize: "12px", margin: 0 }}>Perp voucher</p>
+          <strong style={{ display: "block", marginTop: "8px" }}>
+            {voucher ? (voucher.eligible ? "Eligible" : "Not eligible") : "Not loaded"}
+          </strong>
+          <p style={{ color: "#9ca3af", fontSize: "12px" }}>
+            {voucher?.eligible
+              ? `Grant amount: ${displayCollateral(voucher.grantAmount)} USDso`
+              : voucher?.reason || "Eligibility information unavailable."}
+          </p>
+        </div>
+
+        <div style={{
+          flex: "1 1 220px",
+          background: "#0b1220",
+          border: "1px solid #293548",
+          borderRadius: "10px",
+          padding: "14px",
+        }}>
+          <p style={{ color: "#9ca3af", fontSize: "12px", margin: 0 }}>Open orders</p>
+          <strong style={{ display: "block", marginTop: "8px" }}>
+            {openOrders
+              ? `${openOrders.orders?.length ?? 0} active`
+              : "Not loaded"}
+          </strong>
+          <p style={{ color: "#9ca3af", fontSize: "12px" }}>
+            {openOrders ? "Orders for the selected market" : "Refresh account to check."}
+          </p>
+        </div>
+      </div>
+
+      {openOrders?.orders?.length > 0 && (
+        <div style={{ marginTop: "16px", overflowX: "auto" }}>
+          <h3 style={{ margin: "0 0 8px" }}>Your open orders</h3>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+            <thead>
+              <tr style={{ color: "#9ca3af", textAlign: "left" }}>
+                <th style={{ padding: "6px" }}>ID</th>
+                <th style={{ padding: "6px" }}>Side</th>
+                <th style={{ padding: "6px" }}>Price (USDso)</th>
+                <th style={{ padding: "6px" }}>Remaining ({market.symbol?.split("-")[0]})</th>
+                <th style={{ padding: "6px" }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {openOrders.orders.map((order) => {
+                const id = order.orderId.toString();
+                return (
+                  <tr key={id} style={{ borderTop: "1px solid #293548" }}>
+                    <td style={{ padding: "6px" }}>#{id}</td>
+                    <td style={{ padding: "6px", color: order.isBid ? "#4ade80" : "#f87171" }}>
+                      {order.isBid ? "Long / Buy" : "Short / Sell"}
+                    </td>
+                    <td style={{ padding: "6px" }}>
+                      {formatUnits(BigInt(order.price), market.quoteDecimals ?? 18)}
+                    </td>
+                    <td style={{ padding: "6px" }}>
+                      {formatUnits(BigInt(order.quantityRemaining), market.baseDecimals ?? 18)}
+                    </td>
+                    <td style={{ padding: "6px", textAlign: "right" }}>
+                      <button
+                        onClick={() => cancelOrder(order)}
+                        disabled={busy || cancellingId !== null || !correctNetwork}
+                        style={{
+                          background: "rgba(239,83,80,.10)",
+                          color: "#ef7774",
+                          border: "1px solid rgba(239,83,80,.35)",
+                          borderRadius: "8px",
+                          padding: "6px 12px",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          opacity: busy || cancellingId !== null ? 0.5 : 1,
+                        }}
+                      >
+                        {cancellingId === id ? "Cancelling..." : "Cancel"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <details style={{ marginTop: "16px", color: "#9ca3af" }}>
+        <summary style={{ cursor: "pointer" }}>View technical account details</summary>
+        <pre style={{
+          whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
+          fontSize: "11px",
+          background: "#0b1220",
+          padding: "12px",
+          borderRadius: "8px",
+        }}>
+          {health ? jsonSafe(health) : "Account health not loaded."}
+        </pre>
+        <pre style={{
+          whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
+          fontSize: "11px",
+          background: "#0b1220",
+          padding: "12px",
+          borderRadius: "8px",
+        }}>
+          {openOrders ? jsonSafe(openOrders) : "Open orders not loaded."}
+        </pre>
+      </details>
+
+      {txResult && (
+        <>
+          <h3>Order response</h3>
+          <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+            {jsonSafe(txResult)}
+          </pre>
+        </>
+      )}
+
+      <p style={{ color: "#9ca3af", fontSize: "11px" }}>
+        Testnet prototype. No automatic trades, voucher claims, or collateral
+        deposits. You can place limit orders and cancel your own open orders;
+        every transaction needs wallet approval.
+      </p>
+    </section>
+  );
+}

@@ -9,8 +9,8 @@ from backend.app.api.trading import router as trading_router
 
 
 app = FastAPI(
-    title="AegisTrade AI",
-    description="AI-powered trading platform",
+    title="PerpPilot AI",
+    description="Market data and analytics API for PerpPilot AI (dreamDEX perps on Somnia)",
     version="1.0.0",
 )
 
@@ -41,7 +41,7 @@ app.include_router(trading_router)
 @app.get("/")
 def root():
     return {
-        "message": "AegisTrade AI is running",
+        "message": "PerpPilot AI is running",
         "status": "online",
     }
 

@@ -1,6 +1,13 @@
-
+﻿
 import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import WalletConnect from "./components/WalletConnect.jsx";
+import PerpTradingPanel from "./components/PerpTradingPanel.jsx";
+import SignalInsights from "./components/SignalInsights.jsx";
+import RiskCalculator from "./components/RiskCalculator.jsx";
+import PaperTrading from "./components/PaperTrading.jsx";
+import { generateSignal } from "./lib/analysis.js";
+import { useMarketTicker } from "./lib/useMarketTicker.js";
 import {
   Activity,
   ArrowDown,
@@ -21,225 +28,11 @@ import {
   YAxis,
 } from "recharts";
 import "./App.css";
+import "./theme.css";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
 const INTERVALS = ["1m", "5m", "15m", "1h", "4h", "1d"];
-
-function calculateEMA(values, period) {
-  if (!values.length) return [];
-
-  const multiplier = 2 / (period + 1);
-  const ema = [values[0]];
-
-  for (let i = 1; i < values.length; i += 1) {
-    ema.push(
-      (values[i] - ema[i - 1]) * multiplier + ema[i - 1]
-    );
-  }
-
-  return ema;
-}
-
-function calculateRSI(values, period = 14) {
-  if (values.length < period + 1) {
-    return values.map(() => 50);
-  }
-
-  const result = Array(values.length).fill(50);
-
-  let gains = 0;
-  let losses = 0;
-
-  for (let i = 1; i <= period; i += 1) {
-    const change = values[i] - values[i - 1];
-
-    if (change >= 0) gains += change;
-    else losses += Math.abs(change);
-  }
-
-  let averageGain = gains / period;
-  let averageLoss = losses / period;
-
-  result[period] =
-    averageLoss === 0
-      ? 100
-      : 100 - 100 / (1 + averageGain / averageLoss);
-
-  for (let i = period + 1; i < values.length; i += 1) {
-    const change = values[i] - values[i - 1];
-    const gain = Math.max(change, 0);
-    const loss = Math.max(-change, 0);
-
-    averageGain =
-      (averageGain * (period - 1) + gain) / period;
-
-    averageLoss =
-      (averageLoss * (period - 1) + loss) / period;
-
-    result[i] =
-      averageLoss === 0
-        ? 100
-        : 100 - 100 / (1 + averageGain / averageLoss);
-  }
-
-  return result;
-}
-
-function calculateMACD(values) {
-  const ema12 = calculateEMA(values, 12);
-  const ema26 = calculateEMA(values, 26);
-
-  return values.map((_, index) => ema12[index] - ema26[index]);
-}
-
-function generateSignal(candles) {
-  if (candles.length < 30) {
-    return {
-      signal: "HOLD",
-      confidence: 50,
-      reason: "Waiting for sufficient market data.",
-      factors: [],
-    };
-  }
-
-  const closes = candles.map((candle) => Number(candle.close));
-  const volumes = candles.map((candle) => Number(candle.volume || 0));
-
-  const ema9 = calculateEMA(closes, 9);
-  const ema21 = calculateEMA(closes, 21);
-  const rsi = calculateRSI(closes, 14);
-  const macd = calculateMACD(closes);
-
-  const last = closes.length - 1;
-  const previous = Math.max(0, last - 3);
-
-  const currentPrice = closes[last];
-
-  const ema9Slope =
-    ema9[previous] !== 0
-      ? ((ema9[last] - ema9[previous]) / ema9[previous]) * 100
-      : 0;
-
-  const momentum =
-    closes[previous] !== 0
-      ? ((currentPrice - closes[previous]) / closes[previous]) * 100
-      : 0;
-
-  const recentVolumes = volumes.slice(
-    Math.max(0, last - 19),
-    last + 1
-  );
-
-  const averageVolume =
-    recentVolumes.reduce((sum, value) => sum + value, 0) /
-    Math.max(1, recentVolumes.length);
-
-  const volumeRatio =
-    averageVolume > 0 ? volumes[last] / averageVolume : 1;
-
-  let score = 0;
-  const factors = [];
-
-  if (ema9[last] > ema21[last]) {
-    score += 2;
-    factors.push("EMA trend bullish");
-  } else {
-    score -= 2;
-    factors.push("EMA trend bearish");
-  }
-
-  if (ema9Slope > 0.03) {
-    score += 1;
-    factors.push("Short-term momentum rising");
-  } else if (ema9Slope < -0.03) {
-    score -= 1;
-    factors.push("Short-term momentum falling");
-  }
-
-  if (currentPrice > ema9[last]) {
-    score += 1;
-    factors.push("Price above EMA9");
-  } else if (currentPrice < ema9[last]) {
-    score -= 1;
-    factors.push("Price below EMA9");
-  }
-
-  if (rsi[last] >= 52 && rsi[last] <= 68) {
-    score += 2;
-    factors.push("RSI supports bullish momentum");
-  } else if (rsi[last] >= 32 && rsi[last] <= 48) {
-    score -= 2;
-    factors.push("RSI supports bearish momentum");
-  } else if (rsi[last] > 72) {
-    score -= 1;
-    factors.push("RSI is overbought");
-  } else if (rsi[last] < 28) {
-    score += 1;
-    factors.push("RSI is oversold");
-  }
-
-  if (macd[last] > 0) {
-    score += 2;
-    factors.push("MACD is positive");
-  } else {
-    score -= 2;
-    factors.push("MACD is negative");
-  }
-
-  if (momentum > 0.08) {
-    score += 1;
-    factors.push("Recent price momentum positive");
-  } else if (momentum < -0.08) {
-    score -= 1;
-    factors.push("Recent price momentum negative");
-  }
-
-  if (volumeRatio > 1.15) {
-    if (momentum > 0) {
-      score += 1;
-      factors.push("Volume confirms buying activity");
-    } else if (momentum < 0) {
-      score -= 1;
-      factors.push("Volume confirms selling activity");
-    }
-  }
-
-  let signal = "HOLD";
-
-  if (score >= 6) signal = "LONG";
-  if (score <= -6) signal = "SHORT";
-
-  const absoluteScore = Math.abs(score);
-
-  let confidence = Math.min(92, 50 + absoluteScore * 5);
-
-  if (signal === "HOLD") {
-    confidence = Math.min(68, 50 + absoluteScore * 3);
-  }
-
-  let reason = "Signals are mixed. Waiting for stronger confirmation.";
-
-  if (signal === "LONG") {
-    reason = `Bullish confirmation from ${factors.slice(0, 4).join(", ")}.`;
-  }
-
-  if (signal === "SHORT") {
-    reason = `Bearish confirmation from ${factors.slice(0, 4).join(", ")}.`;
-  }
-
-  return {
-    signal,
-    confidence: Math.round(confidence),
-    reason,
-    factors,
-    rsi: rsi[last],
-    ema9: ema9[last],
-    ema21: ema21[last],
-    macd: macd[last],
-    momentum,
-  };
-}
 
 function money(value, digits = 2) {
   const number = Number(value);
@@ -369,27 +162,43 @@ function App() {
   }, [fetchSelectedMarket, fetchCandles]);
 
   useEffect(() => {
-    fetchMarkets().catch((err) => {
-      console.error("DreamDEX markets loading error:", err);
-      setError(
-        err.response?.data?.detail ||
-        "Unable to load DreamDEX markets."
-      );
-    });
+    const initialFetch = setTimeout(() => {
+      fetchMarkets().catch((err) => {
+        console.error("DreamDEX markets loading error:", err);
+        setError(
+          err.response?.data?.detail ||
+          "Unable to load DreamDEX markets."
+        );
+      });
+    }, 0);
+
+    return () => clearTimeout(initialFetch);
   }, [fetchMarkets]);
 
   useEffect(() => {
-    fetchData();
+    const initialFetch = setTimeout(() => {
+      fetchData();
+    }, 0);
 
     const timer = setInterval(fetchData, 30000);
 
-    return () => clearInterval(timer);
+    return () => {
+      clearTimeout(initialFetch);
+      clearInterval(timer);
+    };
   }, [fetchData]);
+
+  const ticker = useMarketTicker(market);
 
   const analysis = useMemo(
     () => generateSignal(candles),
     [candles]
   );
+
+  const livePrice =
+    ticker.bid !== null && ticker.ask !== null
+      ? (ticker.bid + ticker.ask) / 2
+      : Number(candles[candles.length - 1]?.close || 0);
 
   const chartData = useMemo(
     () =>
@@ -452,9 +261,9 @@ function App() {
           <span className="status-dot"></span>
           DreamDEX · Somnia Testnet
         </div>
+        <WalletConnect />
       </header>
-
-      <main className="dashboard">
+<main className="dashboard">
         <section className="hero">
           <div>
             <p className="eyebrow">DECENTRALIZED PERPETUAL MARKETS</p>
@@ -579,7 +388,7 @@ function App() {
                 ? `${priceChange >= 0 ? "+" : ""}${priceChange.toFixed(2)}%`
                 : "--"}
 
-              <span>{interval} candle change</span>
+              <span>Change over last {candles.length} × {interval} candles</span>
             </div>
           </div>
 
@@ -589,8 +398,18 @@ function App() {
               Best Bid
             </div>
 
-            <div className="metric">--</div>
-            <small>Not provided by current market API</small>
+            <div className="metric">
+              {ticker.bid !== null
+                ? `$${money(ticker.bid, 4)}`
+                : "--"}
+            </div>
+            <small>
+              {ticker.bid !== null
+                ? "Highest resting buy order"
+                : ticker.bookLoaded
+                  ? "No buy orders resting on the book"
+                  : "Loading order book..."}
+            </small>
           </div>
 
           <div className="market-card">
@@ -599,8 +418,18 @@ function App() {
               Best Ask
             </div>
 
-            <div className="metric">--</div>
-            <small>Not provided by current market API</small>
+            <div className="metric">
+              {ticker.ask !== null
+                ? `$${money(ticker.ask, 4)}`
+                : "--"}
+            </div>
+            <small>
+              {ticker.ask !== null
+                ? "Lowest resting sell order"
+                : ticker.bookLoaded
+                  ? "No sell orders resting on the book"
+                  : "Loading order book..."}
+            </small>
           </div>
 
           <div className="market-card">
@@ -609,8 +438,18 @@ function App() {
               24h Volume
             </div>
 
-            <div className="metric">--</div>
-            <small>24-hour volume not currently available</small>
+            <div className="metric">
+              {ticker.volume !== null
+                ? `$${money(ticker.volume, 0)}`
+                : "--"}
+            </div>
+            <small>
+              {ticker.volume !== null
+                ? `Trailing 24h${ticker.trades != null ? ` · ${ticker.trades} trades` : ""}`
+                : ticker.statsLoaded
+                  ? "No trades in the last 24h"
+                  : "Loading 24h volume..."}
+            </small>
           </div>
         </section>
 
@@ -797,6 +636,22 @@ function App() {
         </section>
 
         <section className="bottom-grid">
+          <SignalInsights
+            analysis={analysis}
+            symbol={market?.symbol || selectedSymbol}
+            quoteSymbol={market?.quoteSymbol || "USDso"}
+          />
+          <RiskCalculator analysis={analysis} market={market} />
+        </section>
+
+        <PaperTrading
+          symbol={market?.symbol || selectedSymbol}
+          price={livePrice}
+          analysis={analysis}
+          market={market}
+        />
+
+        <section className="bottom-grid">
           <div className="panel">
             <div className="panel-header">
               <div>
@@ -885,9 +740,9 @@ function App() {
                 Candle chart
               </div>
 
-              <div className="status-off">
-                <span></span>
-                Live order execution not connected
+              <div>
+                <span className="status-dot"></span>
+                Testnet order placement and cancellation (wallet-signed)
               </div>
             </div>
           </div>
@@ -924,7 +779,7 @@ function App() {
 
               <div>
                 <span>Trading</span>
-                <strong>Not connected</strong>
+                <strong>Wallet-signed (testnet)</strong>
               </div>
             </div>
           </div>
@@ -967,14 +822,17 @@ function App() {
           </div>
         </section>
       </main>
+      <PerpTradingPanel market={market} />
 
       <footer>
         <span>PerpPilot AI</span>
         <span>DreamDEX · Somnia Hideki Testnet</span>
-        <span>Development Mode · No real orders</span>
+        <span>Testnet only · No real funds</span>
       </footer>
     </div>
   );
 }
 
 export default App;
+
+
