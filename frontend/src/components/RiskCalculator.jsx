@@ -38,25 +38,30 @@ export default function RiskCalculator({ analysis, market }) {
   // Pre-fill from the signal plan; with no plan (HOLD), fall back to the
   // current mark price and a 1.5 x ATR stop so the calculator stays usable.
   useEffect(() => {
-    if (plan) {
-      const dp = priceDigits(plan.entry);
-      setSide(plan.side);
-      setEntry(plan.entry.toFixed(dp));
-      setStop(plan.stop.toFixed(dp));
+    const apply = () => {
+      if (plan) {
+        const dp = priceDigits(plan.entry);
+        setSide(plan.side);
+        setEntry(plan.entry.toFixed(dp));
+        setStop(plan.stop.toFixed(dp));
+        setSent(false);
+        return;
+      }
+
+      const mark = Number(market?.markPrice);
+      const atr = Number(analysis.volatility?.atr);
+      if (!Number.isFinite(mark) || mark <= 0 || !Number.isFinite(atr) || atr <= 0) {
+        return;
+      }
+
+      const dp = priceDigits(mark);
+      setEntry(mark.toFixed(dp));
+      setStop((side === "SHORT" ? mark + atr * 1.5 : mark - atr * 1.5).toFixed(dp));
       setSent(false);
-      return;
-    }
+    };
 
-    const mark = Number(market?.markPrice);
-    const atr = Number(analysis.volatility?.atr);
-    if (!Number.isFinite(mark) || mark <= 0 || !Number.isFinite(atr) || atr <= 0) {
-      return;
-    }
-
-    const dp = priceDigits(mark);
-    setEntry(mark.toFixed(dp));
-    setStop((side === "SHORT" ? mark + atr * 1.5 : mark - atr * 1.5).toFixed(dp));
-    setSent(false);
+    const timer = setTimeout(apply, 0);
+    return () => clearTimeout(timer);
   }, [symbol, side, plan?.side, plan?.entry, plan?.stop]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const lotSizeUnits = useMemo(() => {

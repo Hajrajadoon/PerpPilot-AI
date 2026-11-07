@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.api.market import router as market_router
 from backend.app.api.dreamdex import router as dreamdex_router
+from backend.app.api.dreamdex_bot import router as dreamdex_bot_router
 from backend.app.api.trading import router as trading_router
 
 
@@ -35,6 +36,7 @@ app.add_middleware(
 
 app.include_router(market_router)
 app.include_router(dreamdex_router)
+app.include_router(dreamdex_bot_router)
 app.include_router(trading_router)
 
 
@@ -50,6 +52,7 @@ def root():
 def health_check():
     return {
         "status": "healthy",
-        "service": "AegisTrade AI",
+        "service": "PerpPilot AI",
     }
+
 

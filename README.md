@@ -32,10 +32,11 @@ PerpPilot AI is a trader tool for **dreamDEX perpetual markets** on the Somnia T
 | Trade plan | Entry, ATR-based stop-loss and two targets (1.5R, 2.5R) |
 | Position sizing | Risk calculator: equity, risk %, stop distance gives size, leverage and required margin, with warnings. One click fills the order form |
 | Paper trading | 10,000 virtual USDso, long / short from any signal, live profit and loss, automatic stop / target closes, full trade history, win rate and R multiple |
-| Real testnet orders | Place and cancel limit orders on the selected market. Pre-checks for lot size, tick size, minimum size and available capacity |
-| Account monitor | Equity, collateral, margin health, margin used, buffer above maintenance, and each open order's distance from the mark |
+| Real testnet orders | Place and cancel limit orders for your dreamDEX wallet through a linked bot. MetaMask signs a one-time authorization for each action; the bot sends the transaction. Pre-checks for lot size, tick size, minimum size and available capacity |
+| Account monitor | Equity, collateral, margin health, margin used, buffer above maintenance, and each open order's distance from the live mark |
+| On-chain market state | Live mark price, funding rate and open interest read from the perp pool, plus best bid / ask and 24h volume |
 | Wallet | MetaMask or any EIP-1193 wallet, automatic add / switch to chain 50383, chain and account detection |
-| Smart wallet mode (experimental) | Trades through your dreamDEX smart wallet (the account that holds Perps Arena collateral) with your wallet as owner |
+| Linked-bot trading | Uses dreamDEX's own "Link a bot" feature: the bot can place and cancel orders for your wallet but can never withdraw, and its key never leaves your backend |
 
 ## Architecture
 
@@ -45,22 +46,26 @@ flowchart LR
         UI[Dashboard UI]
         SIG[Signal engine<br/>lib/analysis.js]
         PAPER[Paper engine<br/>lib/paper.js]
-        TRADE[Trading panel<br/>PerpTradingPanel]
-        SDK[Somnia Markets SDK]
+        TRADE[Trading panel]
+        SDK[Somnia Markets SDK<br/>reads only]
     end
-    subgraph Backend["Backend (FastAPI + Node helper)"]
+    subgraph Backend["Backend (FastAPI + Node)"]
         API[REST API]
-        NODE[markets-json.mjs<br/>SDK reads]
+        CH1["/bot/challenge"]
+        CH2["/bot/execute"]
+        BOT[bot-execute.mjs<br/>holds the bot key]
     end
-    W[Wallet<br/>MetaMask]
-    CH[(Somnia Tokyo testnet<br/>dreamDEX perps)]
+    W[MetaMask<br/>signs a message]
+    CHAIN[(Somnia Tokyo testnet<br/>dreamDEX perps)]
 
-    UI --> API --> NODE --> CH
     UI --> SIG
     UI --> PAPER
-    UI --> TRADE --> SDK
-    SDK -->|reads: book tops, stats, margin, orders| CH
-    TRADE -->|sign + send| W --> CH
+    UI --> TRADE
+    UI --> API --> CHAIN
+    TRADE --> SDK -->|book, stats, mark, margin, orders| CHAIN
+    TRADE --> CH1
+    TRADE -->|EIP-712 signature| W
+    TRADE --> CH2 --> BOT -->|placeOrderFor / cancelOrderFor| CHAIN
 ```
 
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -89,10 +94,16 @@ Optional environment files: `frontend/.env.example` (`VITE_API_URL`) and `backen
 
 ## Trading with real testnet orders
 
-1. Join the **Perps Arena** at <https://app.testnet.dreamdex.io> with your wallet to receive paper USDso.
-2. Make sure the wallet holds some **STT on Hideki** for gas (keep at least 0.4 STT free; Somnia writes reserve a high gas ceiling).
-3. In PerpPilot, connect the same wallet. If a dreamDEX smart wallet is found, it is selected as the **Trading account**. Press **Refresh account** and check that equity is above zero.
-4. Pick a market, choose a direction, then place a limit order well away from the market first (about 1% to 2% below the best bid for a buy) so it rests, then cancel it from the open-orders table.
+PerpPilot trades for your **dreamDEX wallet** (the account that holds your margin and Perps Arena collateral) through dreamDEX's **Link a bot** feature. A bot can place and cancel orders for your wallet but cannot withdraw.
+
+1. In <https://app.testnet.dreamdex.io> open your wallet panel, choose **Link a bot**, paste the bot address (the address of your own bot key), keep **Perps** enabled and send it a little STT for gas.
+2. Put the bot key and addresses in `backend/.env` (never commit this file; see `backend/.env.example` for the variable names). Start the backend and the frontend.
+3. In PerpPilot connect MetaMask. The **Trading account** card should show your dreamDEX wallet, the bot, its gas, and "place yes / cancel yes".
+4. Pick a market, choose a direction, and set a limit price about 1% to 2% below the best bid for a buy, so the order rests. Click **Review & Sign Limit Order**.
+5. MetaMask asks you to **sign a message** (no gas, not a transaction). The backend verifies the signature and the bot sends the order. The transaction hash appears in the **Transaction log**.
+6. The order appears under **Your open orders**. Click **Cancel**, sign again, and the cancellation hash is added to the log.
+
+Setup details and a test checklist: [docs/LINK-A-BOT.md](docs/LINK-A-BOT.md).
 
 ### Order evidence
 
@@ -140,12 +151,13 @@ Issues found while building are in [`feedback/`](feedback), one Markdown file ea
 ```
 backend/
   app/                FastAPI app (market, dreamdex, trading routers)
-  dreamdex/           Node helper that reads dreamDEX through the Somnia Markets SDK
+  dreamdex/           Node helpers: markets-json.mjs (reads), bot-status.mjs, bot-execute.mjs (linked-bot orders)
 frontend/
   src/
     App.jsx           Dashboard and layout
     lib/              analysis.js (signals), paper.js (paper engine), sdk.js, useMarketTicker.js
     components/       WalletConnect, PerpTradingPanel, SignalInsights, RiskCalculator, PaperTrading
+  (lib/dreamdexBot.js: bot status, challenge and signature flow)
 docs/                 Architecture, X post drafts, demo script
 feedback/             Reproducible reports for the dreamDEX Feedback track
 ```
@@ -159,7 +171,8 @@ React 19, Vite, Recharts, viem, `@somnia-chain/markets-sdk` 0.32.1, FastAPI, Nod
 - Paper results ignore fees and slippage and are stored in the browser only.
 - Prices for paper positions update for the selected market only.
 - The signal engine is technical and rule-based; it does not use funding rates or open interest yet.
-- Smart-wallet trading depends on your wallet being an owner of your dreamDEX smart wallet at threshold 1.
+- Real orders need the backend running, because the linked bot's key is held server-side. The bot and wallet addresses are configured for one account.
+- Each order or cancel asks for one MetaMask signature (an authorization valid for 2 minutes and usable once).
 
 ## License
 

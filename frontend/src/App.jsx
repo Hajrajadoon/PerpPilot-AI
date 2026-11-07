@@ -227,7 +227,7 @@ function App() {
   const selectedName =
     market?.symbol || selectedSymbol;
 
-  const currentPrice = getMarketPrice(market);
+  const currentPrice = ticker.mark ?? getMarketPrice(market);
 
   const signalClass =
     analysis.signal === "LONG"
@@ -692,6 +692,24 @@ function App() {
               </div>
 
               <div>
+                <span>Funding rate (per window)</span>
+                <strong>
+                  {ticker.fundingRate !== null
+                    ? `${ticker.fundingRate >= 0 ? "+" : ""}${(ticker.fundingRate * 100).toFixed(4)}%`
+                    : "--"}
+                </strong>
+              </div>
+
+              <div>
+                <span>Open interest</span>
+                <strong>
+                  {ticker.openInterest !== null
+                    ? `${money(ticker.openInterest, 2)} ${market?.baseSymbol || ""}`
+                    : "--"}
+                </strong>
+              </div>
+
+              <div>
                 <span>Initial Margin</span>
                 <strong>
                   {Number.isFinite(Number(market?.initialMarginBps))
@@ -822,7 +840,7 @@ function App() {
           </div>
         </section>
       </main>
-      <PerpTradingPanel market={market} />
+      <PerpTradingPanel market={market} apiUrl={API_URL} liveMark={ticker.mark} />
 
       <footer>
         <span>PerpPilot AI</span>

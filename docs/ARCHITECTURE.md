@@ -19,18 +19,34 @@
 4. Paper trades are evaluated against the live mid price on every refresh.
 5. Real orders go through the trading panel: validate, check capacity, then the wallet signs.
 
-## Trading identity
+## Trading identity: linked bot
 
 ```mermaid
-flowchart TD
-    EOA[Connected wallet] -->|"direct owner"| SW[dreamDEX smart wallet<br/>accounts.addressOf wallet index 0]
-    SW -->|holds| MB[Margin balance / Perps Arena collateral]
-    EOA -->|"createExecutor walletClient"| INNER[Inner executor]
-    INNER -->|"createExecutor smartAccount"| EXEC[Smart-account executor]
-    EXEC --> TR[trader.placePerpOrder / cancelOrder]
+sequenceDiagram
+    participant U as User (MetaMask)
+    participant F as Frontend
+    participant B as Backend
+    participant N as bot-execute.mjs
+    participant C as dreamDEX pool (chain 50383)
+
+    U->>F: Review & Sign Limit Order
+    F->>B: POST /bot/challenge (action, market, price, quantity)
+    B-->>F: one-time EIP-712 challenge (valid 2 minutes)
+    F->>U: signTypedData (no gas, not a transaction)
+    U-->>F: signature
+    F->>B: POST /bot/execute (challengeId, signature)
+    B->>N: run with the stored challenge
+    N->>N: verify signature = authorized MetaMask account
+    N->>C: isOperatorAuthorized(owner, bot, selector)
+    N->>C: simulate then placeOrderFor(owner, ...)
+    C-->>N: transaction hash
+    N-->>F: hash, order id, receipt status
 ```
 
-If a smart wallet derived from the connected wallet exists on chain 50383 and the wallet has authority over it (`accounts.authorityPath`), the panel offers it as the trading account. Otherwise it falls back to the wallet itself.
+- The dreamDEX wallet (owner) keeps the margin. The bot is linked inside dreamDEX with Perps permission and can place, cancel and reduce orders, never withdraw.
+- Each challenge is single-use and expires after 2 minutes. The backend marks it used before running the bot.
+- The bot key lives only in `backend/.env` (`DREAMDEX_BOT_PRIVATE_KEY`) and is never sent to the browser.
+- Account reads (margin, health, open orders) are made directly from the browser with the SDK for the owner address and need no wallet.
 
 ## Safety design
 

@@ -4,3 +4,6 @@
 *.before-*.jsx
 *.status-backup*
 *.zip
+Temp/
+backend/.env
+backend/data/

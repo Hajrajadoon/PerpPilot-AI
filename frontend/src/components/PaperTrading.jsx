@@ -120,7 +120,9 @@ export default function PaperTrading({ symbol, price, analysis, market }) {
     );
   };
 
-  openRef.current = openTrade;
+  useEffect(() => {
+    openRef.current = openTrade;
+  });
 
   // "Open paper trade" button inside the signal plan
   useEffect(() => {
@@ -182,7 +184,9 @@ export default function PaperTrading({ symbol, price, analysis, market }) {
       <p style={{ ...muted, fontSize: "12px", margin: "10px 0 0" }}>
         Practice the signals with virtual money. Trades use the live DreamDEX
         price, a 1.5×ATR stop-loss and a 1.5R take-profit, and close
-        automatically when hit. Prices update for the selected market.
+        automatically when hit. Prices update for the selected market. Paper trades
+        are simulated inside this page only: they never touch the blockchain,
+        so they open no wallet popup and have no transaction hash.
       </p>
 
       <div
@@ -219,7 +223,7 @@ export default function PaperTrading({ symbol, price, analysis, market }) {
             {summary.trades}
           </strong>
           <small style={muted}>
-            {summary.wins} wins · {summary.losses} losses
+            {summary.wins} wins · {summary.losses} losses · {summary.flats} flat
           </small>
         </div>
 
@@ -229,7 +233,7 @@ export default function PaperTrading({ symbol, price, analysis, market }) {
             {summary.winRate.toFixed(1)}%
           </strong>
           <small style={{ color: pnlColor(summary.realized) }}>
-            Realised {signed(summary.realized)}
+            Realised {signed(summary.realized)} · flat trades excluded
           </small>
         </div>
       </div>
