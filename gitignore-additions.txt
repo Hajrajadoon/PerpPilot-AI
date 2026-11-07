@@ -1,0 +1,6 @@
+# Editor backups and scratch files
+*.backup
+*.backup-*
+*.before-*.jsx
+*.status-backup*
+*.zip

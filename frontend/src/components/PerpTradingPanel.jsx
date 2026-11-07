@@ -113,6 +113,17 @@ function errorMessage(error, fallback) {
 const TX_LOG_KEY = "perppilot.txlog.v1";
 const EXPLORER_TX = "https://explorer.testnet.somnia.network/tokyo/tx/";
 
+const SMART_KEY = "perppilot.smartwallet.v1";
+const isAddress = (value) => /^0x[a-fA-F0-9]{40}$/.test(String(value || "").trim());
+
+function loadCustomSmart() {
+  try {
+    return localStorage.getItem(SMART_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
 function loadTxLog() {
   try {
     const parsed = JSON.parse(localStorage.getItem(TX_LOG_KEY));
@@ -154,6 +165,8 @@ export default function PerpTradingPanel({ market }) {
   const [cancellingId, setCancellingId] = useState(null);
   const [lastChecked, setLastChecked] = useState(null);
   const [smart, setSmart] = useState({ status: "idle" });
+  const [customSmart, setCustomSmart] = useState(loadCustomSmart);
+  const [customInput, setCustomInput] = useState(loadCustomSmart);
   const [txLog, setTxLog] = useState(loadTxLog);
   const [copied, setCopied] = useState("");
   const [mode, setMode] = useState("smart");
@@ -215,13 +228,21 @@ export default function PerpTradingPanel({ market }) {
 
       try {
         const client = sdk.client;
-        let found = null;
-        let withoutAuthority = null;
+        const custom = customSmart.trim();
+        const customValid = isAddress(custom);
         const firstAddress = client.accounts.addressOf(account, 0n);
 
-        // A wallet can own several smart accounts: check the first five.
+        // Your own pasted address first, then the accounts derived from your wallet.
+        const candidates = [];
+        if (customValid) candidates.push(custom);
         for (let index = 0n; index < 5n; index += 1n) {
-          const address = client.accounts.addressOf(account, index);
+          candidates.push(client.accounts.addressOf(account, index));
+        }
+
+        let found = null;
+        let withoutAuthority = null;
+
+        for (const address of candidates) {
           const code = await client.getViemClient().getCode({ address });
 
           if (!code || code === "0x") continue;
@@ -242,9 +263,30 @@ export default function PerpTradingPanel({ market }) {
         if (found) {
           setSmart({ status: "ready", ...found });
         } else if (withoutAuthority) {
-          setSmart({ status: "noauthority", address: withoutAuthority });
+          let owners = [];
+          let threshold = "";
+
+          try {
+            const set = await client.accounts.ownersOf(withoutAuthority);
+            owners = set.owners.map((owner) => ({
+              address: owner.address,
+              kind: owner.kind,
+            }));
+            threshold = String(set.threshold);
+          } catch {
+            // owner list is a nice-to-have
+          }
+
+          if (!cancelled) {
+            setSmart({ status: "noauthority", address: withoutAuthority, owners, threshold });
+          }
         } else {
-          setSmart({ status: "missing", address: firstAddress });
+          setSmart({
+            status: "missing",
+            address: firstAddress,
+            customMissing: customValid,
+            custom,
+          });
         }
       } catch (error) {
         if (!cancelled) {
@@ -259,7 +301,7 @@ export default function PerpTradingPanel({ market }) {
     return () => {
       cancelled = true;
     };
-  }, [account, chainId, sdk]);
+  }, [account, chainId, sdk, customSmart]);
 
   useEffect(() => {
     try {
@@ -1018,24 +1060,95 @@ export default function PerpTradingPanel({ market }) {
 
           {smart.status === "missing" && (
             <p style={{ color: "#e3bb69", fontSize: "13px", margin: "8px 0 0" }}>
-              No DreamDEX smart wallet exists yet for this wallet on Hideki
-              (expected {shortAddress(smart.address)}). Sign in at
-              app.testnet.dreamdex.io with this wallet and join the Perps Arena
-              to create one. Until then orders use your connected wallet.
+              {smart.customMissing
+                ? `No smart wallet exists at ${shortAddress(smart.custom)} on Hideki. Check the address.`
+                : `No smart wallet derived from this wallet exists on Hideki (it would be ${shortAddress(smart.address)}). If you already use dreamDEX, paste the address shown in the dreamDEX wallet panel below. Orders use your connected wallet until a smart wallet is found.`}
             </p>
           )}
 
           {smart.status === "noauthority" && (
-            <p style={{ color: "#e3bb69", fontSize: "13px", margin: "8px 0 0" }}>
-              A smart wallet exists at {shortAddress(smart.address)} but this
-              wallet is not one of its owners, so it cannot trade for it.
-            </p>
+            <div style={{ color: "#e3bb69", fontSize: "13px", margin: "8px 0 0" }}>
+              <p style={{ margin: 0 }}>
+                A smart wallet exists at {shortAddress(smart.address)}, but the
+                connected wallet ({shortAddress(account)}) is not one of its
+                owners, so it cannot trade for it.
+              </p>
+
+              {smart.owners?.length > 0 && (
+                <p style={{ margin: "6px 0 0", overflowWrap: "anywhere" }}>
+                  Owners of that smart wallet:{" "}
+                  {smart.owners
+                    .map((owner) => `${owner.address} (${owner.kind})`)
+                    .join(", ")}
+                  {smart.threshold ? ` · signatures needed: ${smart.threshold}` : ""}.
+                  Switch MetaMask to one of those accounts, or sign in to
+                  dreamDEX with the wallet you are using here.
+                </p>
+              )}
+            </div>
           )}
 
           {smart.status === "error" && (
             <p style={{ color: "#e3bb69", fontSize: "13px", margin: "8px 0 0" }}>
               {smart.message}
             </p>
+          )}
+
+          {smart.status !== "checking" && (
+            <div style={{ marginTop: "12px" }}>
+              <p style={{ color: "#8b9a93", fontSize: "12px", margin: "0 0 6px" }}>
+                Already use dreamDEX? Paste your dreamDEX wallet address (shown
+                in its wallet panel) to trade with its collateral:
+              </p>
+
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <input
+                  type="text"
+                  value={customInput}
+                  onChange={(event) => setCustomInput(event.target.value)}
+                  placeholder="0x..."
+                  style={{ ...inputStyle, marginTop: 0, flex: "1 1 320px", fontFamily: "monospace" }}
+                />
+
+                <button
+                  type="button"
+                  disabled={!isAddress(customInput)}
+                  onClick={() => {
+                    const value = customInput.trim();
+                    setCustomSmart(value);
+                    try {
+                      localStorage.setItem(SMART_KEY, value);
+                    } catch {
+                      // storage unavailable
+                    }
+                  }}
+                  style={{
+                    ...actionButtonStyle,
+                    opacity: isAddress(customInput) ? 1 : 0.5,
+                  }}
+                >
+                  Use this address
+                </button>
+
+                {customSmart && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomSmart("");
+                      setCustomInput("");
+                      try {
+                        localStorage.removeItem(SMART_KEY);
+                      } catch {
+                        // storage unavailable
+                      }
+                    }}
+                    style={actionButtonStyle}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
           )}
         </div>
       )}
