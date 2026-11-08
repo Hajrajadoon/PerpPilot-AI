@@ -6,6 +6,7 @@ import PerpTradingPanel from "./components/PerpTradingPanel.jsx";
 import SignalInsights from "./components/SignalInsights.jsx";
 import RiskCalculator from "./components/RiskCalculator.jsx";
 import PaperTrading from "./components/PaperTrading.jsx";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
 import { generateSignal } from "./lib/analysis.js";
 import { useMarketTicker } from "./lib/useMarketTicker.js";
 import {
@@ -636,20 +637,26 @@ function App() {
         </section>
 
         <section className="bottom-grid">
-          <SignalInsights
+          <ErrorBoundary label="trading intelligence">
+<SignalInsights
             analysis={analysis}
             symbol={market?.symbol || selectedSymbol}
             quoteSymbol={market?.quoteSymbol || "USDso"}
           />
-          <RiskCalculator analysis={analysis} market={market} />
+</ErrorBoundary>
+          <ErrorBoundary label="risk calculator">
+<RiskCalculator analysis={analysis} market={market} />
+</ErrorBoundary>
         </section>
 
-        <PaperTrading
+        <ErrorBoundary label="paper trading">
+<PaperTrading
           symbol={market?.symbol || selectedSymbol}
           price={livePrice}
           analysis={analysis}
           market={market}
         />
+</ErrorBoundary>
 
         <section className="bottom-grid">
           <div className="panel">
@@ -840,7 +847,9 @@ function App() {
           </div>
         </section>
       </main>
-      <PerpTradingPanel market={market} apiUrl={API_URL} liveMark={ticker.mark} />
+      <ErrorBoundary label="perp trading">
+<PerpTradingPanel market={market} apiUrl={API_URL} liveMark={ticker.mark} />
+</ErrorBoundary>
 
       <footer>
         <span>PerpPilot AI</span>

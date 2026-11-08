@@ -33,3 +33,12 @@ backend/.env
 
 # Local one-time bot authorization database
 backend/data/
+# Editor backups and scratch files
+*.backup
+*.backup-*
+*.before-*.jsx
+*.status-backup*
+*.zip
+Temp/
+backend/.env
+backend/data/

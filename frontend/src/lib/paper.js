@@ -139,11 +139,15 @@ export function stats(account) {
   const realized = account.history.reduce((s, h) => s + h.pnl, 0);
   const avgR = trades ? account.history.reduce((s, h) => s + h.rMultiple, 0) / trades : 0;
 
+  const decisive = wins + losses;
+
   return {
     trades,
     wins,
     losses,
-    winRate: trades ? (wins / trades) * 100 : 0,
+    flats: trades - decisive,
+    // Win rate counts only trades that made or lost money; flat closes are ignored.
+    winRate: decisive ? (wins / decisive) * 100 : 0,
     realized,
     avgR,
   };
