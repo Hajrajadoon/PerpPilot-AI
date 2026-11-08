@@ -1,25 +1,27 @@
-﻿FROM node:22-bookworm-slim
+﻿FROM python:3.13-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-venv \
-    ca-certificates \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY backend/requirements.txt /app/backend/requirements.txt
 
-RUN python3 -m venv /opt/venv \
+RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --upgrade pip \
     && /opt/venv/bin/pip install -r /app/backend/requirements.txt
 
-COPY backend /app/backend
+COPY backend/dreamdex/package.json backend/dreamdex/package-lock.json /app/backend/dreamdex/
 
 RUN cd /app/backend/dreamdex && npm ci --omit=dev
+
+COPY backend /app/backend
 
 ENV PATH="/opt/venv/bin:$PATH"
 
