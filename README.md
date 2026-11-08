@@ -258,10 +258,9 @@ Issues found while building are in [`feedback/`](feedback), one Markdown file ea
 
 <!-- Replace with 2 or 3 real links to posts that tag @DreamDEXSomnia. Drafts are in docs/X-POSTS.md -->
 
-1. `<link to post 1>`
-2. `<link to post 2>`
-3. `<link to post 3>`
-
+1. `<https://x.com/jadoon_hajra/status/2118591863007728111>`
+2. `<https://x.com/jadoon_hajra/status/2118592977253613894>`
+3. `<https://x.com/jadoon_hajra/status/2119424689991020709>`
 ## Project structure
 
 ```
